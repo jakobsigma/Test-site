@@ -495,4 +495,24 @@ canvas{position:absolute;inset:0;width:100%;height:100%}
 }
 
 .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace}
+
 .small{font-size:12px;color:rgba(201,185,255,.86)}
+
+#brandLogo{
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  border-radius:14px;
+  display:none;
+}
+.logoFallback{position:absolute;inset:0}
+.logo.hasImg #brandLogo{display:block}
+.logo.hasImg .logoFallback{display:none}
+#logoBox{cursor:pointer}
+.toast-global{
+  position:fixed;
+  left:16px;
+  bottom:62px;
+  max-width:min(520px, calc(100vw - 32px));
+  z-index:999;
+}
