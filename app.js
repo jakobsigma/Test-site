@@ -1,6 +1,5 @@
-// app.js
+
 const $ = (q, el = document) => el.querySelector(q);
-const $$ = (q, el = document) => [...el.querySelectorAll(q)];
 
 const state = {
   tool: '',
@@ -21,7 +20,7 @@ const state = {
     flipH: false,
     flipV: false,
     filters: { brightness: 100, contrast: 100, saturation: 100, blur: 0, sharpen: 0 },
-    watermark: { mode: 'text', text: 'NEON', size: 42, opacity: 0.45, pos: 'br', img: null, scale: 0.28 },
+    watermark: { mode: 'text', text: 'NEON', size: 42, opacity: 0.45, pos: 'br', img: null, scale: 0.28, enabled: true },
     crop: null,
     resize: null,
     export: { format: 'png', quality: 0.92 }
@@ -33,11 +32,16 @@ const state = {
     toolTitle: $('#toolTitle'),
     toolSubtitle: $('#toolSubtitle'),
     miniInfo: $('#miniInfo'),
-    toast: $('#toast'),
+    toast: $('#toastGlobal'),
     chipDim: $('#chipDim'),
     chipFmt: $('#chipFmt'),
     dropzone: $('#dropzone'),
-    fileInput: $('#fileInput')
+    fileInput: $('#fileInput'),
+    logoInput: $('#logoInput'),
+    brand: $('#brand'),
+    logoBox: $('#logoBox'),
+    brandLogo: $('#brandLogo'),
+    btnSetLogo: $('#btnSetLogo')
   },
   cropUI: {
     active: false,
@@ -45,7 +49,9 @@ const state = {
     drag: null,
     handle: null
   },
-  mp: { loaded: false, selfie: null }
+  mp: { loaded: false, selfie: null },
+  raf: { scheduled: false, needOverlay: true, needPreview: true },
+  perf: { estTimer: null, lastSliderAt: 0 }
 };
 
 const toolMeta = {
@@ -58,8 +64,56 @@ const toolMeta = {
   watermark: { title: 'Watermark', sub: 'Add text or image watermark, then export.' },
   filters: { title: 'Filters', sub: 'Adjust sliders with live preview, then export.' },
   metadata: { title: 'Metadata', sub: 'View EXIF, strip, add PNG text metadata.' },
-  editor: { title: 'Editor', sub: 'All-in-one adjustments with live preview and export.' }
+  editor: { title: 'Editor', sub: 'All-in-one preview + export.' }
 };
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function toast(title, msg) {
+  const el = state.ui.toast;
+  el.innerHTML = `<strong>${escapeHtml(title)}</strong> <span>${escapeHtml(msg)}</span>`;
+  el.classList.add('show');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 2600);
+}
+
+function fmtBytes(n) {
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  const u = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return `${n.toFixed(i === 0 ? 0 : 2)} ${u[i]}`;
+}
+
+function baseName(name) {
+  const p = (name || '').split('/').pop();
+  const dot = p.lastIndexOf('.');
+  if (dot <= 0) return p || 'image';
+  return p.slice(0, dot);
+}
+
+function extFromType(type) {
+  if (type === 'image/png') return 'png';
+  if (type === 'image/jpeg') return 'jpg';
+  if (type === 'image/webp') return 'webp';
+  return 'png';
+}
+
+function scheduleRender(preview = true, overlay = true) {
+  if (preview) state.raf.needPreview = true;
+  if (overlay) state.raf.needOverlay = true;
+  if (state.raf.scheduled) return;
+  state.raf.scheduled = true;
+  requestAnimationFrame(() => {
+    state.raf.scheduled = false;
+    if (state.raf.needPreview) renderPreview();
+    if (state.raf.needOverlay) renderOverlay();
+    state.raf.needPreview = false;
+    state.raf.needOverlay = false;
+  });
+}
 
 function setRoute(hash) {
   const t = (hash || location.hash || '#').replace('#', '').trim();
@@ -82,72 +136,7 @@ function showTool(t) {
   state.ui.toolSubtitle.textContent = toolMeta[t].sub;
   renderControls(t);
   resizeCanvasesToWrap();
-  renderPreview();
-}
-
-function toast(title, msg) {
-  const el = state.ui.toast;
-  el.innerHTML = `<strong>${escapeHtml(title)}</strong> <span>${escapeHtml(msg)}</span>`;
-  el.classList.add('show');
-  clearTimeout(el._t);
-  el._t = setTimeout(() => el.classList.remove('show'), 2600);
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-
-function fmtBytes(n) {
-  if (!Number.isFinite(n) || n <= 0) return '—';
-  const u = ['B', 'KB', 'MB', 'GB'];
-  let i = 0;
-  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
-  return `${n.toFixed(i === 0 ? 0 : 2)} ${u[i]}`;
-}
-
-function baseName(name) {
-  const p = name.split('/').pop();
-  const dot = p.lastIndexOf('.');
-  if (dot <= 0) return p || 'image';
-  return p.slice(0, dot);
-}
-
-function extFromType(type) {
-  if (type === 'image/png') return 'png';
-  if (type === 'image/jpeg') return 'jpg';
-  if (type === 'image/webp') return 'webp';
-  return 'png';
-}
-
-function bindGlobalUI() {
-  $('#goHome').addEventListener('click', () => { location.hash = ''; showHome(); });
-  $('#btnBack').addEventListener('click', () => { location.hash = ''; showHome(); });
-  $('#btnOpenFile').addEventListener('click', () => state.ui.fileInput.click());
-  $('#btnReset').addEventListener('click', () => resetAdjustments());
-  state.ui.fileInput.addEventListener('change', async (e) => {
-    const f = e.target.files && e.target.files[0];
-    if (f) await loadFile(f);
-    e.target.value = '';
-  });
-
-  window.addEventListener('hashchange', () => setRoute(location.hash));
-  window.addEventListener('resize', () => { resizeCanvasesToWrap(); renderPreview(); });
-
-  const dz = state.ui.dropzone;
-  ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, (e) => {
-    e.preventDefault(); e.stopPropagation(); dz.classList.add('drag');
-  }));
-  ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, (e) => {
-    e.preventDefault(); e.stopPropagation(); dz.classList.remove('drag');
-  }));
-  dz.addEventListener('drop', async (e) => {
-    const f = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (f) await loadFile(f);
-  });
-
-  $('#btnExport').addEventListener('click', () => exportImage());
-
-  bindCropOverlay();
+  scheduleRender(true, true);
 }
 
 function resetAdjustments() {
@@ -155,18 +144,18 @@ function resetAdjustments() {
   state.applied.flipH = false;
   state.applied.flipV = false;
   state.applied.filters = { brightness: 100, contrast: 100, saturation: 100, blur: 0, sharpen: 0 };
-  state.applied.watermark = { mode: 'text', text: 'NEON', size: 42, opacity: 0.45, pos: 'br', img: null, scale: 0.28 };
+  state.applied.watermark = { mode: 'text', text: 'NEON', size: 42, opacity: 0.45, pos: 'br', img: null, scale: 0.28, enabled: true };
   state.applied.crop = null;
   state.applied.resize = null;
   state.applied.export = { format: 'png', quality: 0.92 };
   state.cropUI.rect = { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
   toast('Reset', 'Adjustments cleared.');
   renderControls(state.tool);
-  renderPreview();
+  scheduleRender(true, true);
 }
 
 async function loadFile(file) {
-  if (!file.type.startsWith('image/')) { toast('Upload', 'Please choose an image file.'); return; }
+  if (!file || !file.type.startsWith('image/')) { toast('Upload', 'Please choose an image file.'); return; }
   state.file = file;
   state.name = baseName(file.name || 'image');
   state.ext = extFromType(file.type);
@@ -174,11 +163,13 @@ async function loadFile(file) {
   const img = new Image();
   img.decoding = 'async';
   img.crossOrigin = 'anonymous';
-  await new Promise((res, rej) => {
-    img.onload = res; img.onerror = rej; img.src = url;
-  }).catch(() => null);
+  const ok = await new Promise((res) => {
+    img.onload = () => res(true);
+    img.onerror = () => res(false);
+    img.src = url;
+  });
   URL.revokeObjectURL(url);
-  if (!img.naturalWidth || !img.naturalHeight) { toast('Upload', 'Could not read the image.'); return; }
+  if (!ok || !img.naturalWidth || !img.naturalHeight) { toast('Upload', 'Could not read the image.'); return; }
 
   state.img = img;
   state.w = img.naturalWidth;
@@ -196,50 +187,28 @@ async function loadFile(file) {
   state.ui.chipDim.textContent = `${state.w}×${state.h}`;
   state.ui.chipFmt.textContent = (file.type || 'image/*').replace('image/', '').toUpperCase();
 
+  if (!state.tool) {
+    location.hash = '#editor';
+    state.tool = 'editor';
+    showTool('editor');
+  } else {
+    renderControls(state.tool);
+    scheduleRender(true, true);
+  }
+
   toast('Loaded', `${state.w}×${state.h} ready.`);
-  renderControls(state.tool);
-  renderPreview();
 }
 
 function resizeCanvasesToWrap() {
   const wrap = state.canvas.parentElement;
   const r = wrap.getBoundingClientRect();
-  const dpr = Math.max(1, Math.min(2.5, window.devicePixelRatio || 1));
+  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
   const w = Math.max(320, Math.floor(r.width * dpr));
   const h = Math.max(200, Math.floor(r.height * dpr));
   if (state.canvas.width !== w || state.canvas.height !== h) {
     state.canvas.width = w; state.canvas.height = h;
     state.overlay.width = w; state.overlay.height = h;
   }
-}
-
-function renderControls(tool) {
-  const c = state.ui.controls;
-  c.innerHTML = '';
-  if (!tool) return;
-
-  if (!state.img) {
-    c.appendChild(group('Status', [
-      infoLine('No image loaded', 'Upload or drop an image to start.')
-    ]));
-    return;
-  }
-
-  if (tool === 'crop') c.appendChild(ctrlCrop());
-  if (tool === 'resize') c.appendChild(ctrlResize());
-  if (tool === 'convert') c.appendChild(ctrlConvert(false));
-  if (tool === 'compress') c.appendChild(ctrlConvert(true));
-  if (tool === 'bgremove') c.appendChild(ctrlBgRemove());
-  if (tool === 'rotate') c.appendChild(ctrlRotateFlip());
-  if (tool === 'watermark') c.appendChild(ctrlWatermark());
-  if (tool === 'filters') c.appendChild(ctrlFilters());
-  if (tool === 'metadata') c.appendChild(ctrlMetadata());
-  if (tool === 'editor') c.appendChild(ctrlEditor());
-
-  c.appendChild(group('Export', [
-    exportFormatRow(tool),
-    exportQualityRow(tool)
-  ]));
 }
 
 function group(title, nodes) {
@@ -282,7 +251,7 @@ function toggle(text, on, cb) {
   const t = document.createElement('div');
   t.className = 'tgl' + (on ? ' on' : '');
   t.innerHTML = `<span class="tiny">${escapeHtml(text)}</span>`;
-  t.addEventListener('click', () => { cb(!t.classList.contains('on')); });
+  t.addEventListener('click', () => cb(!t.classList.contains('on')));
   return t;
 }
 
@@ -297,6 +266,7 @@ function slider(labelText, min, max, step, value, cb, suffix = '') {
   v.textContent = `${value}${suffix}`;
   s.addEventListener('input', () => {
     v.textContent = `${s.value}${suffix}`;
+    state.perf.lastSliderAt = performance.now();
     cb(parseFloat(s.value));
   });
   wrap.className = 'slider';
@@ -320,21 +290,44 @@ function btnRow(...buttons) {
   return r;
 }
 
+function renderControls(tool) {
+  const c = state.ui.controls;
+  c.innerHTML = '';
+  if (!tool) return;
+
+  if (!state.img) {
+    c.appendChild(group('Status', [infoLine('No image loaded', 'Click the drop box or use Upload.')]));
+    return;
+  }
+
+  if (tool === 'crop') c.appendChild(ctrlCrop());
+  if (tool === 'resize') c.appendChild(ctrlResize());
+  if (tool === 'convert') c.appendChild(ctrlConvert(false));
+  if (tool === 'compress') c.appendChild(ctrlConvert(true));
+  if (tool === 'bgremove') c.appendChild(ctrlBgRemove());
+  if (tool === 'rotate') c.appendChild(ctrlRotateFlip());
+  if (tool === 'watermark') c.appendChild(ctrlWatermark());
+  if (tool === 'filters') c.appendChild(ctrlFilters());
+  if (tool === 'metadata') c.appendChild(ctrlMetadata());
+  if (tool === 'editor') c.appendChild(ctrlEditor());
+
+  c.appendChild(group('Export', [exportFormatRow(), exportQualityRow()]));
+}
+
 function ctrlCrop() {
   state.cropUI.active = true;
 
   const apply = btn('Apply Crop', 'primary', () => {
-    const r = state.cropUI.rect;
-    state.applied.crop = { ...r };
+    state.applied.crop = { ...state.cropUI.rect };
     toast('Crop', 'Crop applied to export.');
-    renderPreview();
+    scheduleRender(true, true);
   });
 
   const reset = btn('Reset Box', '', () => {
     state.cropUI.rect = { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
     state.applied.crop = null;
     toast('Crop', 'Crop box reset.');
-    renderPreview();
+    scheduleRender(true, true);
   });
 
   const snap = btn('Center 1:1', '', () => {
@@ -343,16 +336,15 @@ function ctrlCrop() {
     if (h > 0.8) { h = 0.8; w = h * ar; }
     state.cropUI.rect = { x: (1 - w) / 2, y: (1 - h) / 2, w, h };
     toast('Crop', 'Centered square.');
-    renderPreview();
+    scheduleRender(true, true);
   });
 
-  const note = infoLine('Drag & resize', 'Use corners/edges. Export uses applied crop.');
-
-  return group('Crop', [note, btnRow(apply, reset, snap)]);
+  return group('Crop', [infoLine('Drag & resize', 'Use corners/edges. Export uses applied crop.'), btnRow(apply, reset, snap)]);
 }
 
 function ctrlResize() {
   state.cropUI.active = false;
+
   const wIn = document.createElement('input');
   wIn.type = 'number';
   wIn.min = 1;
@@ -363,10 +355,11 @@ function ctrlResize() {
   hIn.min = 1;
   hIn.value = state.applied.resize?.h || state.h;
 
-  const lock = document.createElement('div');
+  const lockWrap = document.createElement('div');
+  lockWrap.className = 'toggleRow';
   const isLocked = state.applied.resize?.lock ?? true;
-  lock.appendChild(toggle('Lock aspect ratio', isLocked, (v) => {
-    lock.querySelector('.tgl').classList.toggle('on', v);
+  const lockT = toggle('Lock aspect ratio', isLocked, (v) => {
+    lockT.classList.toggle('on', v);
     if (!state.applied.resize) state.applied.resize = { w: parseInt(wIn.value, 10), h: parseInt(hIn.value, 10), lock: v };
     state.applied.resize.lock = v;
     if (v) {
@@ -374,26 +367,25 @@ function ctrlResize() {
       hIn.value = Math.max(1, Math.round(parseInt(wIn.value, 10) / ar));
       state.applied.resize.h = parseInt(hIn.value, 10);
     }
-    renderPreview();
-  }));
+    scheduleRender(true, false);
+  });
+  lockWrap.appendChild(lockT);
 
   const applyNow = () => {
     const w = Math.max(1, parseInt(wIn.value || '1', 10));
     const h = Math.max(1, parseInt(hIn.value || '1', 10));
-    const lockOn = lock.querySelector('.tgl').classList.contains('on');
+    const lockOn = lockT.classList.contains('on');
     state.applied.resize = { w, h, lock: lockOn };
-    renderPreview();
+    scheduleRender(true, false);
   };
 
   const ar = state.w / state.h;
   wIn.addEventListener('input', () => {
-    const lockOn = lock.querySelector('.tgl').classList.contains('on');
-    if (lockOn) hIn.value = Math.max(1, Math.round(parseInt(wIn.value || '1', 10) / ar));
+    if (lockT.classList.contains('on')) hIn.value = Math.max(1, Math.round(parseInt(wIn.value || '1', 10) / ar));
     applyNow();
   });
   hIn.addEventListener('input', () => {
-    const lockOn = lock.querySelector('.tgl').classList.contains('on');
-    if (lockOn) wIn.value = Math.max(1, Math.round(parseInt(hIn.value || '1', 10) * ar));
+    if (lockT.classList.contains('on')) wIn.value = Math.max(1, Math.round(parseInt(hIn.value || '1', 10) * ar));
     applyNow();
   });
 
@@ -403,6 +395,7 @@ function ctrlResize() {
     applyNow();
     toast('Resize', 'Set to 50%.');
   });
+
   const preset1080 = btn('Fit 1080p', '', () => {
     const maxW = 1920, maxH = 1080;
     const s = Math.min(maxW / state.w, maxH / state.h, 1);
@@ -411,18 +404,18 @@ function ctrlResize() {
     applyNow();
     toast('Resize', 'Fit within 1920×1080.');
   });
+
   const reset = btn('Reset', '', () => {
     wIn.value = state.w; hIn.value = state.h;
     state.applied.resize = null;
-    renderPreview();
+    scheduleRender(true, false);
     toast('Resize', 'Reset to original.');
   });
 
-  const note = infoLine('Resize', 'Live preview reflects resize for export.');
   return group('Resize', [
-    note,
+    infoLine('Resize', 'Live preview reflects resize for export.'),
     row2(field('Width', wIn), field('Height', hIn)),
-    lock,
+    lockWrap,
     btnRow(presetHalf, preset1080, reset)
   ]);
 }
@@ -431,12 +424,11 @@ function ctrlConvert(showSize) {
   state.cropUI.active = false;
 
   const sel = document.createElement('select');
-  const opts = [
+  [
     { v: 'png', t: 'PNG (lossless)' },
     { v: 'jpg', t: 'JPG (lossy)' },
     { v: 'webp', t: 'WebP (lossy)' }
-  ];
-  opts.forEach(o => {
+  ].forEach(o => {
     const op = document.createElement('option');
     op.value = o.v; op.textContent = o.t;
     sel.appendChild(op);
@@ -445,42 +437,34 @@ function ctrlConvert(showSize) {
   sel.addEventListener('change', () => {
     state.applied.export.format = sel.value;
     renderControls(state.tool);
-    renderPreview();
+    scheduleRender(true, false);
+    if (showSize) estimateSizeDebounced();
   });
 
   const q = slider('Quality', 0.2, 1, 0.01, state.applied.export.quality ?? 0.92, (v) => {
     state.applied.export.quality = v;
-    renderPreview();
-    if (showSize) estimateSize();
+    scheduleRender(true, false);
+    if (showSize) estimateSizeDebounced();
   });
 
-  const note = infoLine(showSize ? 'Compress' : 'Convert', showSize ? 'Adjust quality and export.' : 'Pick a format and export.');
-  const sline = showSize ? infoLine('Estimate', 'Export size updates after changes.') : null;
-
   const box = group(showSize ? 'Compress' : 'Convert', [
-    note,
+    infoLine(showSize ? 'Compress' : 'Convert', showSize ? 'Adjust quality and export.' : 'Pick a format and export.'),
     field('Format', sel),
-    (state.applied.export.format !== 'png') ? q : infoLine('Quality', 'Lossless PNG ignores quality.'),
-    sline
+    (state.applied.export.format !== 'png') ? q : infoLine('Quality', 'Lossless PNG ignores quality.')
   ]);
 
-  if (showSize) setTimeout(() => estimateSize(), 50);
+  if (showSize) estimateSizeDebounced();
   return box;
 }
 
 function ctrlRotateFlip() {
   state.cropUI.active = false;
-
-  const rL = btn('Rotate -90°', '', () => { state.applied.rotation = (state.applied.rotation - 90 + 360) % 360; renderPreview(); });
-  const rR = btn('Rotate +90°', '', () => { state.applied.rotation = (state.applied.rotation + 90) % 360; renderPreview(); });
-  const fh = btn('Flip Horizontal', '', () => { state.applied.flipH = !state.applied.flipH; renderPreview(); });
-  const fv = btn('Flip Vertical', '', () => { state.applied.flipV = !state.applied.flipV; renderPreview(); });
-  const reset = btn('Reset', '', () => { state.applied.rotation = 0; state.applied.flipH = false; state.applied.flipV = false; renderPreview(); toast('Rotate', 'Reset.'); });
-
-  return group('Rotate & Flip', [
-    infoLine('Transforms', 'Preview matches export.'),
-    btnRow(rL, rR, fh, fv, reset)
-  ]);
+  const rL = btn('Rotate -90°', '', () => { state.applied.rotation = (state.applied.rotation - 90 + 360) % 360; scheduleRender(true, false); });
+  const rR = btn('Rotate +90°', '', () => { state.applied.rotation = (state.applied.rotation + 90) % 360; scheduleRender(true, false); });
+  const fh = btn('Flip Horizontal', '', () => { state.applied.flipH = !state.applied.flipH; scheduleRender(true, false); });
+  const fv = btn('Flip Vertical', '', () => { state.applied.flipV = !state.applied.flipV; scheduleRender(true, false); });
+  const reset = btn('Reset', '', () => { state.applied.rotation = 0; state.applied.flipH = false; state.applied.flipV = false; scheduleRender(true, false); toast('Rotate', 'Reset.'); });
+  return group('Rotate & Flip', [infoLine('Transforms', 'Preview matches export.'), btnRow(rL, rR, fh, fv, reset)]);
 }
 
 function ctrlWatermark() {
@@ -489,10 +473,10 @@ function ctrlWatermark() {
   const modeWrap = document.createElement('div');
   modeWrap.className = 'toggleRow';
   const tText = toggle('Text', state.applied.watermark.mode === 'text', (on) => {
-    if (on) { state.applied.watermark.mode = 'text'; renderControls(state.tool); renderPreview(); }
+    if (on) { state.applied.watermark.mode = 'text'; renderControls(state.tool); scheduleRender(true, false); }
   });
   const tImg = toggle('Image', state.applied.watermark.mode === 'image', (on) => {
-    if (on) { state.applied.watermark.mode = 'image'; renderControls(state.tool); renderPreview(); }
+    if (on) { state.applied.watermark.mode = 'image'; renderControls(state.tool); scheduleRender(true, false); }
   });
   modeWrap.appendChild(tText);
   modeWrap.appendChild(tImg);
@@ -503,10 +487,10 @@ function ctrlWatermark() {
     const txt = document.createElement('input');
     txt.type = 'text';
     txt.value = state.applied.watermark.text || 'NEON';
-    txt.addEventListener('input', () => { state.applied.watermark.text = txt.value; renderPreview(); });
+    txt.addEventListener('input', () => { state.applied.watermark.text = txt.value; scheduleRender(true, false); });
 
     const size = slider('Text size', 10, 180, 1, state.applied.watermark.size || 42, (v) => {
-      state.applied.watermark.size = v; renderPreview();
+      state.applied.watermark.size = v; scheduleRender(true, false);
     }, 'px');
 
     controls.push(field('Text', txt), size);
@@ -517,41 +501,41 @@ function ctrlWatermark() {
       const url = URL.createObjectURL(f);
       const im = new Image();
       im.decoding = 'async';
-      await new Promise((res, rej) => { im.onload = res; im.onerror = rej; im.src = url; }).catch(() => null);
+      const ok = await new Promise((res) => { im.onload = () => res(true); im.onerror = () => res(false); im.src = url; });
       URL.revokeObjectURL(url);
-      if (!im.naturalWidth) return;
+      if (!ok || !im.naturalWidth) return;
       state.applied.watermark.img = im;
       toast('Watermark', 'Image watermark loaded.');
-      renderPreview();
+      scheduleRender(true, false);
     });
+
     const sc = slider('Watermark scale', 0.05, 0.7, 0.01, state.applied.watermark.scale ?? 0.28, (v) => {
-      state.applied.watermark.scale = v; renderPreview();
+      state.applied.watermark.scale = v; scheduleRender(true, false);
     });
+
     controls.push(up, sc);
   }
 
   const op = slider('Opacity', 0.05, 1, 0.01, state.applied.watermark.opacity ?? 0.45, (v) => {
-    state.applied.watermark.opacity = v; renderPreview();
+    state.applied.watermark.opacity = v; scheduleRender(true, false);
   });
 
   const pos = document.createElement('select');
-  [
-    ['tl', 'Top-left'], ['tr', 'Top-right'], ['bl', 'Bottom-left'], ['br', 'Bottom-right'], ['c', 'Center']
-  ].forEach(([v, t]) => {
+  [['tl','Top-left'],['tr','Top-right'],['bl','Bottom-left'],['br','Bottom-right'],['c','Center']].forEach(([v,t]) => {
     const o = document.createElement('option'); o.value = v; o.textContent = t; pos.appendChild(o);
   });
   pos.value = state.applied.watermark.pos || 'br';
-  pos.addEventListener('change', () => { state.applied.watermark.pos = pos.value; renderPreview(); });
+  pos.addEventListener('change', () => { state.applied.watermark.pos = pos.value; scheduleRender(true, false); });
 
   const onOff = toggle('Enable watermark', !!state.applied.watermark.enabled, (v) => {
     state.applied.watermark.enabled = v;
-    renderPreview();
+    scheduleRender(true, false);
   });
 
   const reset = btn('Reset', '', () => {
     state.applied.watermark = { mode: 'text', text: 'NEON', size: 42, opacity: 0.45, pos: 'br', img: null, scale: 0.28, enabled: true };
     renderControls(state.tool);
-    renderPreview();
+    scheduleRender(true, false);
     toast('Watermark', 'Reset.');
   });
 
@@ -570,31 +554,24 @@ function ctrlFilters() {
   state.cropUI.active = false;
   const f = state.applied.filters;
 
-  const b = slider('Brightness', 0, 200, 1, f.brightness, (v) => { f.brightness = v; renderPreview(); });
-  const c = slider('Contrast', 0, 200, 1, f.contrast, (v) => { f.contrast = v; renderPreview(); });
-  const s = slider('Saturation', 0, 200, 1, f.saturation, (v) => { f.saturation = v; renderPreview(); });
-  const bl = slider('Blur', 0, 18, 0.1, f.blur, (v) => { f.blur = v; renderPreview(); }, 'px');
-  const sh = slider('Sharpen', 0, 100, 1, f.sharpen, (v) => { f.sharpen = v; renderPreview(); });
+  const b = slider('Brightness', 0, 200, 1, f.brightness, (v) => { f.brightness = v; scheduleRender(true, false); });
+  const c = slider('Contrast', 0, 200, 1, f.contrast, (v) => { f.contrast = v; scheduleRender(true, false); });
+  const s = slider('Saturation', 0, 200, 1, f.saturation, (v) => { f.saturation = v; scheduleRender(true, false); });
+  const bl = slider('Blur', 0, 18, 0.1, f.blur, (v) => { f.blur = v; scheduleRender(true, false); }, 'px');
+  const sh = slider('Sharpen', 0, 100, 1, f.sharpen, (v) => { f.sharpen = v; scheduleRender(true, false); });
 
   const reset = btn('Reset', '', () => {
     state.applied.filters = { brightness: 100, contrast: 100, saturation: 100, blur: 0, sharpen: 0 };
     renderControls(state.tool);
-    renderPreview();
+    scheduleRender(true, false);
     toast('Filters', 'Reset.');
   });
 
-  return group('Filters', [
-    infoLine('Adjustments', 'Applies to preview and export.'),
-    b, c, s, bl, sh,
-    btnRow(reset)
-  ]);
+  return group('Filters', [infoLine('Adjustments', 'Sharpen is export-perfect; preview auto-skips if heavy.'), b, c, s, bl, sh, btnRow(reset)]);
 }
 
 function ctrlBgRemove() {
   state.cropUI.active = false;
-
-  const note = infoLine('Background removal', 'Best on portraits; exports with transparency.');
-
   const go = btn('Remove Background', 'primary', async () => {
     await ensureSelfieSegmentation();
     if (!state.mp.selfie) { toast('BG Remove', 'Segmentation not available.'); return; }
@@ -602,18 +579,11 @@ function ctrlBgRemove() {
     await removeBackground();
     toast('BG Remove', 'Done. Export PNG/WebP for transparency.');
   });
-
-  const hint = infoLine('Tip', 'If result looks rough, try a higher-resolution image.');
-
-  return group('Remove Background', [note, btnRow(go), hint]);
+  return group('Remove Background', [infoLine('Background removal', 'Best on portraits; exports with transparency.'), btnRow(go), infoLine('Tip', 'If result looks rough, try a higher-resolution image.')]);
 }
 
 function ctrlMetadata() {
   state.cropUI.active = false;
-
-  const exifBox = document.createElement('div');
-  exifBox.className = 'group';
-  exifBox.innerHTML = `<div class="groupTitle"><span>EXIF</span><span class="badge">View</span></div><div class="small" id="exifOut">Loading…</div>`;
 
   const strip = btn('Strip metadata (re-encode)', 'primary', async () => {
     state.applied.export.format = 'png';
@@ -623,108 +593,56 @@ function ctrlMetadata() {
     await exportImage({ forceFormat: 'png', forceName: `${state.name}_clean` });
   });
 
-  const tTitle = document.createElement('input');
-  tTitle.type = 'text';
-  tTitle.value = '';
-  const tAuthor = document.createElement('input');
-  tAuthor.type = 'text';
-  tAuthor.value = '';
-
-  const addPngText = btn('Export PNG with text metadata', '', async () => {
-    const title = tTitle.value.trim();
-    const author = tAuthor.value.trim();
-    const blob = await renderToBlob('png', 0.92);
-    const withText = await addPngTextChunks(blob, { Title: title, Author: author });
-    downloadBlob(withText, `${state.name}_meta.png`);
-    toast('Metadata', 'PNG exported with text chunks.');
-  });
-
-  const wrap = group('Metadata', [
-    infoLine('Change metadata', 'Viewing EXIF, stripping by re-encoding, and adding PNG text fields.'),
-    btnRow(strip),
-    document.createElement('div')
+  return group('Metadata', [
+    infoLine('Metadata', 'Re-encoding removes most metadata. PNG can also store text chunks (optional).'),
+    btnRow(strip)
   ]);
-
-  const metaFields = document.createElement('div');
-  metaFields.className = 'row';
-  metaFields.appendChild(field('Title (PNG)', tTitle));
-  metaFields.appendChild(field('Author (PNG)', tAuthor));
-  wrap.appendChild(metaFields);
-  wrap.appendChild(btnRow(addPngText));
-
-  setTimeout(() => loadExifInto(exifBox.querySelector('#exifOut')), 40);
-  const outer = document.createElement('div');
-  outer.appendChild(wrap);
-  outer.appendChild(exifBox);
-  return outer;
 }
 
 function ctrlEditor() {
   state.cropUI.active = false;
 
   const pick = document.createElement('select');
-  const modes = [
-    ['quick', 'Quick: Filters + Watermark'],
-    ['transform', 'Transform: Rotate/Flip + Resize'],
-    ['crop', 'Crop: Draggable crop box'],
-    ['all', 'All: Everything enabled']
-  ];
-  modes.forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; pick.appendChild(o); });
+  [['quick','Quick: Filters + Watermark'],['transform','Transform: Rotate/Flip + Resize'],['crop','Crop: Draggable crop box'],['all','All: Everything enabled']]
+    .forEach(([v,t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; pick.appendChild(o); });
+
   pick.value = state._editorMode || 'all';
   pick.addEventListener('change', () => {
     state._editorMode = pick.value;
     state.cropUI.active = (pick.value === 'crop' || pick.value === 'all');
     renderControls(state.tool);
-    renderPreview();
+    scheduleRender(true, true);
   });
 
-  const modeBox = group('Editor Mode', [
-    infoLine('All-in-one', 'Use the editor mode selector plus tool controls below.'),
-    field('Mode', pick)
-  ]);
-
+  const modeBox = group('Editor Mode', [infoLine('All-in-one', 'Use the selector plus controls below.'), field('Mode', pick)]);
   const blocks = [modeBox];
 
   const mode = state._editorMode || 'all';
-  if (mode === 'quick' || mode === 'all') {
-    blocks.push(ctrlFilters(), ctrlWatermark());
-  }
-  if (mode === 'transform' || mode === 'all') {
-    blocks.push(ctrlRotateFlip(), ctrlResize());
-  }
-  if (mode === 'crop' || mode === 'all') {
-    blocks.push(ctrlCrop());
-  }
+  if (mode === 'quick' || mode === 'all') blocks.push(ctrlFilters(), ctrlWatermark());
+  if (mode === 'transform' || mode === 'all') blocks.push(ctrlRotateFlip(), ctrlResize());
+  if (mode === 'crop' || mode === 'all') blocks.push(ctrlCrop());
 
   const wrap = document.createElement('div');
   blocks.forEach(b => wrap.appendChild(b));
   return wrap;
 }
 
-function exportFormatRow(tool) {
+function exportFormatRow() {
   const sel = document.createElement('select');
-  const allowAlpha = (state.tool === 'bgremove' || state.tool === 'watermark' || state.tool === 'filters' || state.tool === 'crop' || state.tool === 'editor' || state.tool === 'metadata' || state.tool === 'rotate' || state.tool === 'resize' || state.tool === 'convert' || state.tool === 'compress');
-  const opts = [
-    { v: 'png', t: 'PNG' },
-    { v: 'jpg', t: 'JPG' },
-    { v: 'webp', t: 'WebP' }
-  ];
-  opts.forEach(o => {
-    const op = document.createElement('option');
-    op.value = o.v; op.textContent = o.t;
-    sel.appendChild(op);
+  [{v:'png',t:'PNG'},{v:'jpg',t:'JPG'},{v:'webp',t:'WebP'}].forEach(o => {
+    const op = document.createElement('option'); op.value = o.v; op.textContent = o.t; sel.appendChild(op);
   });
   sel.value = state.applied.export.format || 'png';
   sel.addEventListener('change', () => {
     state.applied.export.format = sel.value;
     renderControls(state.tool);
-    renderPreview();
+    scheduleRender(true, false);
+    if (state.tool === 'compress') estimateSizeDebounced();
   });
 
   const info = document.createElement('div');
   info.className = 'small';
-  if (!allowAlpha) info.textContent = '';
-  else info.textContent = (sel.value === 'jpg') ? 'JPG has no transparency.' : 'PNG/WebP can keep transparency.';
+  info.textContent = (sel.value === 'jpg') ? 'JPG has no transparency.' : 'PNG/WebP can keep transparency.';
 
   const wrap = document.createElement('div');
   wrap.appendChild(field('Export format', sel));
@@ -732,248 +650,26 @@ function exportFormatRow(tool) {
   return wrap;
 }
 
-function exportQualityRow(tool) {
+function exportQualityRow() {
   const f = state.applied.export.format || 'png';
   if (f === 'png') return infoLine('Quality', 'Lossless PNG ignores quality.');
-
   return slider('Export quality', 0.2, 1, 0.01, state.applied.export.quality ?? 0.92, (v) => {
     state.applied.export.quality = v;
-    renderPreview();
+    scheduleRender(true, false);
+    if (state.tool === 'compress') estimateSizeDebounced();
   });
 }
 
-async function estimateSize() {
-  if (!state.img) return;
-  const f = state.applied.export.format || 'jpg';
-  const q = (f === 'png') ? 0.92 : (state.applied.export.quality ?? 0.92);
-  const blob = await renderToBlob(f, q).catch(() => null);
-  if (!blob) return;
-  state.ui.miniInfo.textContent = `Estimated export: ${fmtBytes(blob.size)}`;
-}
-
-function bindCropOverlay() {
-  const ov = state.overlay;
-  const pointer = (e) => {
-    const r = ov.getBoundingClientRect();
-    const x = (e.clientX - r.left) / r.width;
-    const y = (e.clientY - r.top) / r.height;
-    return { x, y };
-  };
-
-  const hit = (p) => {
-    const r = state.cropUI.rect;
-    const pad = 0.02;
-    const x0 = r.x, y0 = r.y, x1 = r.x + r.w, y1 = r.y + r.h;
-
-    const near = (a, b) => Math.abs(a - b) <= pad;
-    const inside = p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
-
-    const handles = [
-      { id: 'tl', x: x0, y: y0 },
-      { id: 'tr', x: x1, y: y0 },
-      { id: 'bl', x: x0, y: y1 },
-      { id: 'br', x: x1, y: y1 },
-      { id: 'l', x: x0, y: (y0 + y1) / 2 },
-      { id: 'r', x: x1, y: (y0 + y1) / 2 },
-      { id: 't', x: (x0 + x1) / 2, y: y0 },
-      { id: 'b', x: (x0 + x1) / 2, y: y1 }
-    ];
-    for (const h of handles) {
-      if (near(p.x, h.x) && near(p.y, h.y)) return { type: 'handle', id: h.id };
-    }
-    if (inside) return { type: 'move' };
-    return { type: 'none' };
-  };
-
-  const clampRect = () => {
-    let r = state.cropUI.rect;
-    r.w = Math.max(0.05, Math.min(0.98, r.w));
-    r.h = Math.max(0.05, Math.min(0.98, r.h));
-    r.x = Math.max(0.01, Math.min(0.99 - r.w, r.x));
-    r.y = Math.max(0.01, Math.min(0.99 - r.h, r.y));
-  };
-
-  const onDown = (e) => {
-    if (!state.cropUI.active || !state.img) return;
-    ov.setPointerCapture(e.pointerId);
-    const p = pointer(e);
-    const h = hit(p);
-    state.cropUI.drag = { start: p, rect: { ...state.cropUI.rect } };
-    state.cropUI.handle = h.type === 'handle' ? h.id : null;
-    state.cropUI.moving = (h.type === 'move');
-    state.cropUI.resizing = (h.type === 'handle');
-  };
-
-  const onMove = (e) => {
-    if (!state.cropUI.active || !state.img) return;
-    const p = pointer(e);
-    const r0 = state.cropUI.drag?.rect;
-    const s0 = state.cropUI.drag?.start;
-    if (!r0 || !s0) {
-      renderOverlay();
-      return;
-    }
-    const dx = p.x - s0.x;
-    const dy = p.y - s0.y;
-
-    let r = { ...r0 };
-
-    if (state.cropUI.moving) {
-      r.x += dx;
-      r.y += dy;
-    } else if (state.cropUI.resizing) {
-      const id = state.cropUI.handle;
-      const x0 = r0.x, y0 = r0.y, x1 = r0.x + r0.w, y1 = r0.y + r0.h;
-
-      let nx0 = x0, ny0 = y0, nx1 = x1, ny1 = y1;
-      if (id.includes('l') || id === 'l') nx0 = x0 + dx;
-      if (id.includes('r') || id === 'r') nx1 = x1 + dx;
-      if (id.includes('t') || id === 't') ny0 = y0 + dy;
-      if (id.includes('b') || id === 'b') ny1 = y1 + dy;
-
-      const min = 0.05;
-      nx0 = Math.min(nx0, nx1 - min);
-      ny0 = Math.min(ny0, ny1 - min);
-      nx1 = Math.max(nx1, nx0 + min);
-      ny1 = Math.max(ny1, ny0 + min);
-
-      r.x = nx0; r.y = ny0; r.w = nx1 - nx0; r.h = ny1 - ny0;
-    }
-
-    state.cropUI.rect = r;
-    clampRect();
-    renderOverlay();
-  };
-
-  const onUp = (e) => {
-    if (!state.cropUI.active || !state.img) return;
-    state.cropUI.drag = null;
-    state.cropUI.handle = null;
-    state.cropUI.moving = false;
-    state.cropUI.resizing = false;
-    renderOverlay();
-  };
-
-  ov.addEventListener('pointerdown', onDown);
-  ov.addEventListener('pointermove', onMove);
-  ov.addEventListener('pointerup', onUp);
-  ov.addEventListener('pointercancel', onUp);
-}
-
-function renderOverlay() {
-  const ctx = state.octx;
-  const w = state.overlay.width;
-  const h = state.overlay.height;
-  ctx.clearRect(0, 0, w, h);
-
-  if (!state.img) return;
-
-  const showCrop = state.cropUI.active && (state.tool === 'crop' || state.tool === 'editor');
-  if (!showCrop) return;
-
-  const r = state.cropUI.rect;
-  const x = r.x * w;
-  const y = r.y * h;
-  const rw = r.w * w;
-  const rh = r.h * h;
-
-  ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fillRect(0, 0, w, h);
-  ctx.clearRect(x, y, rw, rh);
-
-  ctx.strokeStyle = 'rgba(181,108,255,0.9)';
-  ctx.lineWidth = Math.max(2, Math.floor(w / 600));
-  ctx.shadowColor = 'rgba(181,108,255,0.6)';
-  ctx.shadowBlur = 18;
-  ctx.strokeRect(x, y, rw, rh);
-
-  ctx.shadowBlur = 0;
-  ctx.strokeStyle = 'rgba(245,240,255,0.25)';
-  ctx.setLineDash([8, 8]);
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(x + rw / 3, y); ctx.lineTo(x + rw / 3, y + rh);
-  ctx.moveTo(x + 2 * rw / 3, y); ctx.lineTo(x + 2 * rw / 3, y + rh);
-  ctx.moveTo(x, y + rh / 3); ctx.lineTo(x + rw, y + rh / 3);
-  ctx.moveTo(x, y + 2 * rh / 3); ctx.lineTo(x + rw, y + 2 * rh / 3);
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  const handle = (hx, hy) => {
-    const s = Math.max(10, Math.floor(w / 70));
-    ctx.fillStyle = 'rgba(181,108,255,0.95)';
-    ctx.shadowColor = 'rgba(181,108,255,0.65)';
-    ctx.shadowBlur = 18;
-    ctx.fillRect(hx - s / 2, hy - s / 2, s, s);
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = 'rgba(245,240,255,0.65)';
-    ctx.strokeRect(hx - s / 2, hy - s / 2, s, s);
-  };
-
-  handle(x, y);
-  handle(x + rw, y);
-  handle(x, y + rh);
-  handle(x + rw, y + rh);
-  handle(x, y + rh / 2);
-  handle(x + rw, y + rh / 2);
-  handle(x + rw / 2, y);
-  handle(x + rw / 2, y + rh);
-
-  ctx.restore();
-}
-
-function renderPreview() {
-  const ctx = state.ctx;
-  const cw = state.canvas.width;
-  const ch = state.canvas.height;
-  ctx.clearRect(0, 0, cw, ch);
-  renderOverlay();
-
-  if (!state.img) {
-    ctx.save();
-    ctx.fillStyle = 'rgba(201,185,255,0.85)';
-    ctx.font = `${Math.max(14, Math.floor(cw / 34))}px ui-sans-serif, system-ui`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('Upload an image to preview', cw / 2, ch / 2);
-    ctx.restore();
-    return;
-  }
-
-  const src = buildRenderSource();
-  const dst = fitRect(src.w, src.h, cw, ch);
-  ctx.save();
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-
-  const filterStr = `brightness(${state.applied.filters.brightness}%) contrast(${state.applied.filters.contrast}%) saturate(${state.applied.filters.saturation}%) blur(${state.applied.filters.blur}px)`;
-  ctx.filter = filterStr;
-
-  ctx.translate(dst.x + dst.w / 2, dst.y + dst.h / 2);
-  const rot = (state.applied.rotation || 0) * Math.PI / 180;
-  ctx.rotate(rot);
-  ctx.scale(state.applied.flipH ? -1 : 1, state.applied.flipV ? -1 : 1);
-
-  const drawW = dst.w;
-  const drawH = dst.h;
-  ctx.drawImage(src.canvas, -drawW / 2, -drawH / 2, drawW, drawH);
-
-  ctx.restore();
-
-  if (state.applied.filters.sharpen > 0) {
-    const imgData = ctx.getImageData(dst.x, dst.y, dst.w, dst.h);
-    const sharpened = sharpenImageData(imgData, state.applied.filters.sharpen / 100);
-    ctx.putImageData(sharpened, dst.x, dst.y);
-  }
-
-  if (state.applied.watermark.enabled) {
-    drawWatermark(ctx, dst);
-  }
-
-  state.ui.miniInfo.textContent = `${state.tool ? toolMeta[state.tool].title : 'Tool'} • ${state.w}×${state.h}`;
-  state.ui.chipDim.textContent = `${src.w}×${src.h}`;
-  state.ui.chipFmt.textContent = (state.file?.type ? state.file.type.replace('image/', '').toUpperCase() : 'IMAGE');
+function estimateSizeDebounced() {
+  clearTimeout(state.perf.estTimer);
+  state.perf.estTimer = setTimeout(async () => {
+    if (!state.img) return;
+    const f = state.applied.export.format || 'jpg';
+    const q = (f === 'png') ? 0.92 : (state.applied.export.quality ?? 0.92);
+    const blob = await renderToBlob(f, q).catch(() => null);
+    if (!blob) return;
+    state.ui.miniInfo.textContent = `Estimated export: ${fmtBytes(blob.size)}`;
+  }, 220);
 }
 
 function fitRect(sw, sh, dw, dh) {
@@ -989,7 +685,7 @@ function buildRenderSource() {
   let canvas = state.baseCanvas;
   let w = state.w, h = state.h;
 
-  if (state.applied.crop && (state.tool !== 'crop' ? true : true)) {
+  if (state.applied.crop) {
     const r = state.applied.crop;
     const x = Math.max(0, Math.floor(r.x * w));
     const y = Math.max(0, Math.floor(r.y * h));
@@ -998,9 +694,8 @@ function buildRenderSource() {
     const out = document.createElement('canvas');
     out.width = cw; out.height = ch;
     out.getContext('2d').drawImage(canvas, x, y, cw, ch, 0, 0, cw, ch);
-    canvas = out;
-    w = cw; h = ch;
-  } else if (state.tool === 'crop' || (state.tool === 'editor' && state.cropUI.active)) {
+    canvas = out; w = cw; h = ch;
+  } else if (state.cropUI.active && (state.tool === 'crop' || state.tool === 'editor') && state.img) {
     const r = state.cropUI.rect;
     const x = Math.max(0, Math.floor(r.x * w));
     const y = Math.max(0, Math.floor(r.y * h));
@@ -1067,14 +762,14 @@ function sharpenImageData(imgData, amount) {
 
 function drawWatermark(ctx, dst) {
   const wm = state.applied.watermark;
-  if (!wm || (!wm.text && !wm.img)) return;
-  const pad = Math.max(10, Math.floor(Math.min(dst.w, dst.h) * 0.03));
+  if (!wm || !wm.enabled || (!wm.text && !wm.img)) return;
 
+  const pad = Math.max(10, Math.floor(Math.min(dst.w, dst.h) * 0.03));
   let x = dst.x + pad, y = dst.y + pad;
   if (wm.pos === 'tr') { x = dst.x + dst.w - pad; y = dst.y + pad; }
   if (wm.pos === 'bl') { x = dst.x + pad; y = dst.y + dst.h - pad; }
   if (wm.pos === 'br') { x = dst.x + dst.w - pad; y = dst.y + dst.h - pad; }
-  if (wm.pos === 'c') { x = dst.x + dst.w / 2; y = dst.y + dst.h / 2; }
+  if (wm.pos === 'c')  { x = dst.x + dst.w / 2; y = dst.y + dst.h / 2; }
 
   ctx.save();
   ctx.globalAlpha = Math.max(0, Math.min(1, wm.opacity ?? 0.45));
@@ -1086,8 +781,8 @@ function drawWatermark(ctx, dst) {
     const w = dst.w * s;
     const h = w * (wm.img.naturalHeight / wm.img.naturalWidth);
     let dx = x, dy = y;
-    if (wm.pos === 'tr') { dx -= w; }
-    if (wm.pos === 'bl') { dy -= h; }
+    if (wm.pos === 'tr') dx -= w;
+    if (wm.pos === 'bl') dy -= h;
     if (wm.pos === 'br') { dx -= w; dy -= h; }
     if (wm.pos === 'c') { dx -= w / 2; dy -= h / 2; }
     ctx.drawImage(wm.img, dx, dy, w, h);
@@ -1100,12 +795,11 @@ function drawWatermark(ctx, dst) {
 
     const m = ctx.measureText(text);
     let tx = x, ty = y;
-    if (wm.pos === 'tr') tx -= m.width;
-    if (wm.pos === 'bl') ty += 0;
-    if (wm.pos === 'br') { tx -= m.width; }
-    if (wm.pos === 'c') { tx -= m.width / 2; ty += size / 2; }
 
-    if (wm.pos === 'bl' || wm.pos === 'br') ty -= 0;
+    if (wm.pos === 'tr') tx -= m.width;
+    if (wm.pos === 'br') tx -= m.width;
+    if (wm.pos === 'c')  { tx -= m.width / 2; ty += size / 2; }
+
     if (wm.pos === 'tl' || wm.pos === 'tr') ty += size;
     if (wm.pos === 'bl' || wm.pos === 'br') ty -= 8;
 
@@ -1117,6 +811,125 @@ function drawWatermark(ctx, dst) {
     ctx.lineWidth = Math.max(2, Math.floor(size / 18));
     ctx.strokeText(text, tx, ty);
   }
+
+  ctx.restore();
+}
+
+function renderPreview() {
+  const ctx = state.ctx;
+  const cw = state.canvas.width;
+  const ch = state.canvas.height;
+  ctx.clearRect(0, 0, cw, ch);
+
+  if (!state.img) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(201,185,255,0.85)';
+    ctx.font = `${Math.max(14, Math.floor(cw / 34))}px ui-sans-serif, system-ui`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Click Upload or the drop box to preview', cw / 2, ch / 2);
+    ctx.restore();
+    return;
+  }
+
+  const src = buildRenderSource();
+  const dst = fitRect(src.w, src.h, cw, ch);
+
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+
+  const filterStr = `brightness(${state.applied.filters.brightness}%) contrast(${state.applied.filters.contrast}%) saturate(${state.applied.filters.saturation}%) blur(${state.applied.filters.blur}px)`;
+  ctx.filter = filterStr;
+
+  ctx.translate(dst.x + dst.w / 2, dst.y + dst.h / 2);
+  const rot = ((state.applied.rotation || 0) % 360) * Math.PI / 180;
+  ctx.rotate(rot);
+  ctx.scale(state.applied.flipH ? -1 : 1, state.applied.flipV ? -1 : 1);
+  ctx.drawImage(src.canvas, -dst.w / 2, -dst.h / 2, dst.w, dst.h);
+
+  ctx.restore();
+
+  const previewPixels = dst.w * dst.h;
+  const recentlySliding = (performance.now() - state.perf.lastSliderAt) < 140;
+  const canSharpenPreview = previewPixels <= 1_500_000 && !recentlySliding;
+
+  if (state.applied.filters.sharpen > 0 && canSharpenPreview) {
+    const imgData = ctx.getImageData(dst.x, dst.y, dst.w, dst.h);
+    const sharpened = sharpenImageData(imgData, state.applied.filters.sharpen / 100);
+    ctx.putImageData(sharpened, dst.x, dst.y);
+  }
+
+  if (state.applied.filters.sharpen > 0 && !canSharpenPreview) {
+    state.ui.miniInfo.textContent = `Preview optimized • Sharpen applies on export`;
+  } else {
+    state.ui.miniInfo.textContent = `${toolMeta[state.tool]?.title || 'Tool'} • ${state.w}×${state.h}`;
+  }
+
+  if (state.applied.watermark.enabled) drawWatermark(ctx, dst);
+
+  state.ui.chipDim.textContent = `${src.w}×${src.h}`;
+  state.ui.chipFmt.textContent = (state.file?.type ? state.file.type.replace('image/', '').toUpperCase() : 'IMAGE');
+}
+
+function renderOverlay() {
+  const ctx = state.octx;
+  const w = state.overlay.width;
+  const h = state.overlay.height;
+  ctx.clearRect(0, 0, w, h);
+
+  if (!state.img) return;
+  const showCrop = state.cropUI.active && (state.tool === 'crop' || state.tool === 'editor');
+  if (!showCrop) return;
+
+  const r = state.cropUI.rect;
+  const x = r.x * w;
+  const y = r.y * h;
+  const rw = r.w * w;
+  const rh = r.h * h;
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(0, 0, w, h);
+  ctx.clearRect(x, y, rw, rh);
+
+  ctx.strokeStyle = 'rgba(181,108,255,0.9)';
+  ctx.lineWidth = Math.max(2, Math.floor(w / 600));
+  ctx.shadowColor = 'rgba(181,108,255,0.6)';
+  ctx.shadowBlur = 18;
+  ctx.strokeRect(x, y, rw, rh);
+
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = 'rgba(245,240,255,0.25)';
+  ctx.setLineDash([8, 8]);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x + rw / 3, y); ctx.lineTo(x + rw / 3, y + rh);
+  ctx.moveTo(x + 2 * rw / 3, y); ctx.lineTo(x + 2 * rw / 3, y + rh);
+  ctx.moveTo(x, y + rh / 3); ctx.lineTo(x + rw, y + rh / 3);
+  ctx.moveTo(x, y + 2 * rh / 3); ctx.lineTo(x + rw, y + 2 * rh / 3);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const handle = (hx, hy) => {
+    const s = Math.max(10, Math.floor(w / 70));
+    ctx.fillStyle = 'rgba(181,108,255,0.95)';
+    ctx.shadowColor = 'rgba(181,108,255,0.65)';
+    ctx.shadowBlur = 18;
+    ctx.fillRect(hx - s / 2, hy - s / 2, s, s);
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(245,240,255,0.65)';
+    ctx.strokeRect(hx - s / 2, hy - s / 2, s, s);
+  };
+
+  handle(x, y);
+  handle(x + rw, y);
+  handle(x, y + rh);
+  handle(x + rw, y + rh);
+  handle(x, y + rh / 2);
+  handle(x + rw, y + rh / 2);
+  handle(x + rw / 2, y);
+  handle(x + rw / 2, y + rh);
 
   ctx.restore();
 }
@@ -1142,7 +955,7 @@ function downloadBlob(blob, filename) {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setTimeout(() => URL.revokeObjectURL(url), 1200);
 }
 
 async function renderToBlob(format, quality) {
@@ -1204,6 +1017,17 @@ function pickFile(accept) {
   });
 }
 
+async function loadScriptOnce(src) {
+  return new Promise((res, rej) => {
+    if ([...document.scripts].some(s => s.src === src)) return res();
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => res();
+    s.onerror = rej;
+    document.head.appendChild(s);
+  });
+}
+
 async function ensureSelfieSegmentation() {
   if (state.mp.loaded) return;
   await loadScriptOnce('https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js');
@@ -1226,7 +1050,6 @@ async function removeBackground() {
   const octx = out.getContext('2d', { willReadFrequently: true });
 
   const seg = state.mp.selfie;
-
   const result = await new Promise((res) => {
     seg.onResults((r) => res(r));
     seg.send({ image: inCanvas });
@@ -1254,145 +1077,183 @@ async function removeBackground() {
   state.ui.chipFmt.textContent = 'RGBA';
   state.applied.export.format = 'png';
   renderControls(state.tool);
-  renderPreview();
+  scheduleRender(true, false);
 }
 
-function loadScriptOnce(src) {
-  return new Promise((res, rej) => {
-    if ([...document.scripts].some(s => s.src === src)) return res();
-    const s = document.createElement('script');
-    s.src = src;
-    s.onload = () => res();
-    s.onerror = rej;
-    document.head.appendChild(s);
-  });
+function bindCropOverlay() {
+  const ov = state.overlay;
+
+  const pointer = (e) => {
+    const r = ov.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width;
+    const y = (e.clientY - r.top) / r.height;
+    return { x, y };
+  };
+
+  const hit = (p) => {
+    const r = state.cropUI.rect;
+    const pad = 0.02;
+    const x0 = r.x, y0 = r.y, x1 = r.x + r.w, y1 = r.y + r.h;
+    const near = (a, b) => Math.abs(a - b) <= pad;
+    const inside = p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+
+    const handles = [
+      { id: 'tl', x: x0, y: y0 }, { id: 'tr', x: x1, y: y0 }, { id: 'bl', x: x0, y: y1 }, { id: 'br', x: x1, y: y1 },
+      { id: 'l', x: x0, y: (y0 + y1) / 2 }, { id: 'r', x: x1, y: (y0 + y1) / 2 },
+      { id: 't', x: (x0 + x1) / 2, y: y0 }, { id: 'b', x: (x0 + x1) / 2, y: y1 }
+    ];
+
+    for (const h of handles) if (near(p.x, h.x) && near(p.y, h.y)) return { type: 'handle', id: h.id };
+    if (inside) return { type: 'move' };
+    return { type: 'none' };
+  };
+
+  const clampRect = () => {
+    let r = state.cropUI.rect;
+    r.w = Math.max(0.05, Math.min(0.98, r.w));
+    r.h = Math.max(0.05, Math.min(0.98, r.h));
+    r.x = Math.max(0.01, Math.min(0.99 - r.w, r.x));
+    r.y = Math.max(0.01, Math.min(0.99 - r.h, r.y));
+  };
+
+  const onDown = (e) => {
+    if (!state.cropUI.active || !state.img) return;
+    ov.setPointerCapture(e.pointerId);
+    const p = pointer(e);
+    const h = hit(p);
+    state.cropUI.drag = { start: p, rect: { ...state.cropUI.rect } };
+    state.cropUI.handle = h.type === 'handle' ? h.id : null;
+    state.cropUI.moving = (h.type === 'move');
+    state.cropUI.resizing = (h.type === 'handle');
+  };
+
+  const onMove = (e) => {
+    if (!state.cropUI.active || !state.img) return;
+    const p = pointer(e);
+    const r0 = state.cropUI.drag?.rect;
+    const s0 = state.cropUI.drag?.start;
+    if (!r0 || !s0) return;
+
+    const dx = p.x - s0.x;
+    const dy = p.y - s0.y;
+
+    let r = { ...r0 };
+
+    if (state.cropUI.moving) {
+      r.x += dx; r.y += dy;
+    } else if (state.cropUI.resizing) {
+      const id = state.cropUI.handle;
+      const x0 = r0.x, y0 = r0.y, x1 = r0.x + r0.w, y1 = r0.y + r0.h;
+
+      let nx0 = x0, ny0 = y0, nx1 = x1, ny1 = y1;
+      if (id.includes('l') || id === 'l') nx0 = x0 + dx;
+      if (id.includes('r') || id === 'r') nx1 = x1 + dx;
+      if (id.includes('t') || id === 't') ny0 = y0 + dy;
+      if (id.includes('b') || id === 'b') ny1 = y1 + dy;
+
+      const min = 0.05;
+      nx0 = Math.min(nx0, nx1 - min);
+      ny0 = Math.min(ny0, ny1 - min);
+      nx1 = Math.max(nx1, nx0 + min);
+      ny1 = Math.max(ny1, ny0 + min);
+
+      r.x = nx0; r.y = ny0; r.w = nx1 - nx0; r.h = ny1 - ny0;
+    }
+
+    state.cropUI.rect = r;
+    clampRect();
+    scheduleRender(false, true);
+  };
+
+  const onUp = () => {
+    if (!state.cropUI.active || !state.img) return;
+    state.cropUI.drag = null;
+    state.cropUI.handle = null;
+    state.cropUI.moving = false;
+    state.cropUI.resizing = false;
+    scheduleRender(false, true);
+  };
+
+  ov.addEventListener('pointerdown', onDown);
+  ov.addEventListener('pointermove', onMove);
+  ov.addEventListener('pointerup', onUp);
+  ov.addEventListener('pointercancel', onUp);
 }
 
-async function loadExifInto(outEl) {
-  outEl.textContent = 'Loading…';
-  await loadScriptOnce('https://cdn.jsdelivr.net/npm/exif-js@2.3.0/exif.min.js').catch(() => null);
-
-  if (!window.EXIF || !state.file) {
-    outEl.textContent = 'EXIF viewer unavailable.';
+function setLogoDataUrl(dataUrl) {
+  if (!dataUrl) {
+    localStorage.removeItem('neon_logo');
+    state.ui.brandLogo.src = '';
+    state.ui.logoBox.classList.remove('hasImg');
     return;
   }
+  localStorage.setItem('neon_logo', dataUrl);
+  state.ui.brandLogo.src = dataUrl;
+  state.ui.logoBox.classList.add('hasImg');
+}
 
-  const file = state.file;
-  const reader = new FileReader();
-  const buf = await new Promise((res) => {
-    reader.onload = () => res(reader.result);
-    reader.readAsArrayBuffer(file);
+async function loadLogoFromStorage() {
+  const d = localStorage.getItem('neon_logo');
+  if (d) setLogoDataUrl(d);
+}
+
+async function setLogoFromFile(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  const dataUrl = await new Promise((res) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.readAsDataURL(file);
+  });
+  setLogoDataUrl(dataUrl);
+  toast('Logo', 'Logo updated.');
+}
+
+function bindGlobalUI() {
+  $('#btnBack').addEventListener('click', () => { location.hash = ''; showHome(); });
+  $('#btnReset').addEventListener('click', () => resetAdjustments());
+  $('#btnExport').addEventListener('click', () => exportImage());
+
+  $('#btnOpenFile').addEventListener('click', () => state.ui.fileInput.click());
+  state.ui.dropzone.addEventListener('click', () => state.ui.fileInput.click());
+
+  state.ui.fileInput.addEventListener('change', async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) await loadFile(f);
+    e.target.value = '';
   });
 
-  let tags = null;
-  try {
-    const view = new DataView(buf);
-    const blob = new Blob([view], { type: file.type });
-    const img = new Image();
-    const url = URL.createObjectURL(blob);
-    await new Promise((r) => { img.onload = r; img.src = url; });
-    URL.revokeObjectURL(url);
+  const dz = state.ui.dropzone;
+  ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, (e) => {
+    e.preventDefault(); e.stopPropagation(); dz.classList.add('drag');
+  }));
+  ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, (e) => {
+    e.preventDefault(); e.stopPropagation(); dz.classList.remove('drag');
+  }));
+  dz.addEventListener('drop', async (e) => {
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) await loadFile(f);
+  });
 
-    EXIF.getData(img, function () {
-      tags = EXIF.getAllTags(this);
-    });
-  } catch { tags = null; }
+  state.ui.btnSetLogo.addEventListener('click', () => state.ui.logoInput.click());
+  state.ui.logoBox.addEventListener('click', () => state.ui.logoInput.click());
+  state.ui.brand.addEventListener('dblclick', () => { setLogoDataUrl(null); toast('Logo', 'Logo cleared.'); });
 
-  if (!tags || Object.keys(tags).length === 0) {
-    outEl.textContent = 'No EXIF metadata found (or not supported for this file).';
-    return;
-  }
+  state.ui.logoInput.addEventListener('change', async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) await setLogoFromFile(f);
+    e.target.value = '';
+  });
 
-  const entries = Object.entries(tags)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .slice(0, 60)
-    .map(([k, v]) => `${k}: ${String(v)}`);
+  window.addEventListener('hashchange', () => setRoute(location.hash));
+  window.addEventListener('resize', () => { resizeCanvasesToWrap(); scheduleRender(true, true); });
 
-  outEl.innerHTML = `<div class="mono">${escapeHtml(entries.join('\n'))}</div><div class="hr"></div><div class="small">Showing up to 60 tags.</div>`;
+  bindCropOverlay();
 }
-
-function crc32(buf) {
-  let c = 0xffffffff;
-  for (let i = 0; i < buf.length; i++) {
-    c ^= buf[i];
-    for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
-  }
-  return (c ^ 0xffffffff) >>> 0;
-}
-
-function u32(n) {
-  const b = new Uint8Array(4);
-  b[0] = (n >>> 24) & 255;
-  b[1] = (n >>> 16) & 255;
-  b[2] = (n >>> 8) & 255;
-  b[3] = n & 255;
-  return b;
-}
-
-function ascii(s) {
-  const a = new Uint8Array(s.length);
-  for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i) & 255;
-  return a;
-}
-
-function concatBytes(...arrs) {
-  const len = arrs.reduce((a, b) => a + b.length, 0);
-  const out = new Uint8Array(len);
-  let o = 0;
-  for (const a of arrs) { out.set(a, o); o += a.length; }
-  return out;
-}
-
-async function addPngTextChunks(pngBlob, dict) {
-  const buf = new Uint8Array(await pngBlob.arrayBuffer());
-  const sig = buf.slice(0, 8);
-  const chunks = [];
-  let off = 8;
-  while (off + 12 <= buf.length) {
-    const len = (buf[off] << 24) | (buf[off + 1] << 16) | (buf[off + 2] << 8) | buf[off + 3];
-    const type = String.fromCharCode(buf[off + 4], buf[off + 5], buf[off + 6], buf[off + 7]);
-    const dataStart = off + 8;
-    const dataEnd = dataStart + len;
-    const crcEnd = dataEnd + 4;
-    const chunk = buf.slice(off, crcEnd);
-    chunks.push({ type, chunk, off, len });
-    off = crcEnd;
-    if (type === 'IEND') break;
-  }
-
-  const beforeIEND = [];
-  const iend = chunks.find(c => c.type === 'IEND')?.chunk;
-
-  for (const c of chunks) {
-    if (c.type === 'IEND') break;
-    beforeIEND.push(c.chunk);
-  }
-
-  const textChunks = [];
-  for (const [k, v] of Object.entries(dict)) {
-    if (!v) continue;
-    const keyword = k.trim().slice(0, 79);
-    const text = String(v).slice(0, 2048);
-    const data = concatBytes(ascii(keyword), new Uint8Array([0]), new TextEncoder().encode(text));
-    const type = ascii('tEXt');
-    const len = u32(data.length);
-    const crc = u32(crc32(concatBytes(type, data)));
-    const chunk = concatBytes(len, type, data, crc);
-    textChunks.push(chunk);
-  }
-
-  const out = concatBytes(sig, ...beforeIEND, ...textChunks, iend || new Uint8Array());
-  return new Blob([out], { type: 'image/png' });
-}
-
-function setToolActiveFlags(tool) {
-  state.cropUI.active = (tool === 'crop' || (tool === 'editor' && (state._editorMode === 'crop' || state._editorMode === 'all')));
-}
-
-setInterval(() => renderOverlay(), 140);
 
 (function init() {
   bindGlobalUI();
+  loadLogoFromStorage();
   setRoute(location.hash);
   showHome();
+  scheduleRender(true, true);
 })();
