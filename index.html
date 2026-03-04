@@ -1,3 +1,4 @@
+<!-- index.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -17,7 +18,7 @@
   </div>
 
   <header class="topbar">
-    <div class="brand" id="brand">
+    <div class="brand" id="goHome">
       <div class="logo" id="logoBox">
         <img id="brandLogo" alt="" />
         <div class="logoFallback" id="logoFallback">
@@ -33,8 +34,8 @@
     </div>
 
     <div class="topActions">
-      <button class="pill ghost" id="btnSetLogo"><span class="ico">✦</span><span>Set Logo</span></button>
-      <button class="pill" id="btnOpenFile"><span class="ico">⤒</span><span>Upload</span></button>
+      <button class="pill ghost" id="btnSetLogo"><span class="ico">✦</span><span>Logo</span></button>
+      <button class="pill" id="btnUpload"><span class="ico">⤒</span><span>Upload</span></button>
       <button class="pill ghost" id="btnReset"><span class="ico">↺</span><span>Reset</span></button>
     </div>
 
@@ -50,24 +51,24 @@
           <h1>Pick a tool. Drop an image. Export instantly.</h1>
           <p>Dark neon UI, smooth animations, live preview, and fast exports—right in your browser.</p>
           <div class="hintRow">
-            <div class="hint"><span class="dot"></span> Drag & drop supported everywhere</div>
-            <div class="hint"><span class="dot"></span> Live canvas preview</div>
+            <div class="hint"><span class="dot"></span> Drag & drop supported</div>
+            <div class="hint"><span class="dot"></span> Live preview</div>
             <div class="hint"><span class="dot"></span> Export PNG/JPG/WebP</div>
           </div>
         </div>
       </div>
 
-      <div class="cards" id="cards">
-        <a class="card" href="#crop" data-tool="crop"><div class="cardTop"><div class="cardIcon">✂️</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Crop</div><div class="cardDesc">Draggable crop box with handles.</div></div></a>
-        <a class="card" href="#resize" data-tool="resize"><div class="cardTop"><div class="cardIcon">↔️</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Resize</div><div class="cardDesc">Custom size with aspect lock.</div></div></a>
-        <a class="card" href="#convert" data-tool="convert"><div class="cardTop"><div class="cardIcon">🧪</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Convert</div><div class="cardDesc">PNG, JPG, WebP exports.</div></div></a>
-        <a class="card" href="#compress" data-tool="compress"><div class="cardTop"><div class="cardIcon">🗜️</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Compress</div><div class="cardDesc">Quality slider and size estimate.</div></div></a>
-        <a class="card" href="#bgremove" data-tool="bgremove"><div class="cardTop"><div class="cardIcon">🪄</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Remove Background</div><div class="cardDesc">In-browser segmentation (best on people).</div></div></a>
-        <a class="card" href="#rotate" data-tool="rotate"><div class="cardTop"><div class="cardIcon">🧭</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Rotate & Flip</div><div class="cardDesc">Rotate, mirror, and invert.</div></div></a>
-        <a class="card" href="#watermark" data-tool="watermark"><div class="cardTop"><div class="cardIcon">💠</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Watermark</div><div class="cardDesc">Text or image watermark overlay.</div></div></a>
-        <a class="card" href="#filters" data-tool="filters"><div class="cardTop"><div class="cardIcon">🎚️</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Filters</div><div class="cardDesc">Brightness, contrast, blur, sharpen.</div></div></a>
-        <a class="card" href="#metadata" data-tool="metadata"><div class="cardTop"><div class="cardIcon">🧾</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Metadata</div><div class="cardDesc">View EXIF, strip, add PNG text.</div></div></a>
-        <a class="card" href="#editor" data-tool="editor"><div class="cardTop"><div class="cardIcon">🧩</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Editor</div><div class="cardDesc">All-in-one preview + export.</div></div></a>
+      <div class="cards">
+        <a class="card" href="#crop"><div class="cardTop"><div class="cardIcon">✂️</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Crop</div><div class="cardDesc">Draggable crop box with handles.</div></div></a>
+        <a class="card" href="#resize"><div class="cardTop"><div class="cardIcon">↔️</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Resize</div><div class="cardDesc">Custom size with aspect lock.</div></div></a>
+        <a class="card" href="#convert"><div class="cardTop"><div class="cardIcon">🧪</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Convert</div><div class="cardDesc">PNG, JPG, WebP exports.</div></div></a>
+        <a class="card" href="#compress"><div class="cardTop"><div class="cardIcon">🗜️</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Compress</div><div class="cardDesc">Quality slider and size estimate.</div></div></a>
+        <a class="card" href="#bgremove"><div class="cardTop"><div class="cardIcon">🪄</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Remove Background</div><div class="cardDesc">In-browser segmentation (best on people).</div></div></a>
+        <a class="card" href="#rotate"><div class="cardTop"><div class="cardIcon">🧭</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Rotate & Flip</div><div class="cardDesc">Rotate, mirror, and invert.</div></div></a>
+        <a class="card" href="#watermark"><div class="cardTop"><div class="cardIcon">💠</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Watermark</div><div class="cardDesc">Text or image watermark overlay.</div></div></a>
+        <a class="card" href="#filters"><div class="cardTop"><div class="cardIcon">🎚️</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Filters</div><div class="cardDesc">Brightness, contrast, saturation, blur.</div></div></a>
+        <a class="card" href="#metadata"><div class="cardTop"><div class="cardIcon">🧾</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Metadata</div><div class="cardDesc">View EXIF + strip on export.</div></div></a>
+        <a class="card" href="#editor"><div class="cardTop"><div class="cardIcon">🧩</div><div class="cardPulse"></div></div><div class="cardBody"><div class="cardTitle">Editor</div><div class="cardDesc">All-in-one preview + export.</div></div></a>
       </div>
     </section>
 
@@ -76,7 +77,7 @@
         <button class="pill ghost" id="btnBack"><span class="ico">←</span><span>Home</span></button>
         <div class="toolTitleWrap">
           <div class="toolTitle" id="toolTitle">Tool</div>
-          <div class="toolSubtitle" id="toolSubtitle">Drop an image to begin.</div>
+          <div class="toolSubtitle" id="toolSubtitle">Upload an image to begin.</div>
         </div>
         <div class="toolHeaderRight">
           <div class="miniInfo" id="miniInfo"></div>
@@ -91,10 +92,9 @@
             <div class="dzIcon">🖼️</div>
             <div class="dzText">
               <div class="dzTitle">Drag & drop an image</div>
-              <div class="dzSub">or click here to upload</div>
+              <div class="dzSub">or click to upload</div>
             </div>
           </div>
-
           <div class="controls" id="controls"></div>
         </div>
 
@@ -107,6 +107,7 @@
                 <div class="chip" id="chipFmt">—</div>
               </div>
             </div>
+
             <div class="canvasWrap">
               <canvas id="canvas"></canvas>
               <canvas id="overlay"></canvas>
@@ -119,7 +120,7 @@
     </section>
   </main>
 
-  <div class="toast toast-global" id="toastGlobal"></div>
+  <div class="toast toast-global" id="toast"></div>
 
   <footer class="footer">
     <div class="footLeft">Neon Image Tools</div>
@@ -135,4 +136,3 @@
   <script src="app.js"></script>
 </body>
 </html>
-
